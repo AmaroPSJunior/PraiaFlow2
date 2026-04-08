@@ -10,6 +10,7 @@ import { initializeApp } from 'firebase/app';
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import admin from 'firebase-admin';
+import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import { 
   getFirestore, 
   collection, 
@@ -44,9 +45,9 @@ if (!admin.apps.length) {
 const getAdminDb = () => {
   const dbId = firebaseConfig.firestoreDatabaseId;
   if (dbId && dbId !== '(default)') {
-    return admin.firestore(dbId);
+    return getAdminFirestore(admin.app(), dbId);
   }
-  return admin.firestore();
+  return getAdminFirestore(admin.app());
 };
 
 const adminDb = getAdminDb();
