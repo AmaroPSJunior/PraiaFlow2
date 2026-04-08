@@ -1,0 +1,206 @@
+{
+  "entities": {
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "A food or drink item in the menu",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "available": { "type": "boolean" },
+        "createdBy": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "attributes": {
+          "type": "object",
+          "properties": {
+            "temperature": { "type": "string", "enum": ["gelada", "natural"] },
+            "size": { "type": "string", "enum": ["pequeno", "medio", "grande"] }
+          }
+        }
+      },
+      "required": ["name", "price", "category", "available"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A customer order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderNumber": { "type": "number" },
+        "tableId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "attendantId": { "type": "string", "description": "ID of the waiter who made the order" },
+        "attendantName": { "type": "string", "description": "Name of the waiter who made the order" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "name": { "type": "string" },
+              "quantity": { "type": "number" },
+              "price": { "type": "number" },
+              "observations": { "type": "string" },
+              "attributes": { "type": "object" }
+            }
+          }
+        },
+        "total": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "paid", "preparing", "ready", "delivered", "cancelled"] },
+        "paymentMethod": { "type": "string", "enum": ["pix", "card"] },
+        "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orderNumber", "tableId", "items", "total", "status", "createdAt"]
+    },
+    "Table": {
+      "title": "Table",
+      "description": "A table in the beach kiosk",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "number": { "type": "number" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["number", "active"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "staff", "waiter", "client", "root"] },
+        "displayName": { "type": "string" },
+        "phone": { "type": "string" },
+        "cpf": { "type": "string" },
+        "address": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Menu category",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "icon": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "description", "icon"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Log of administrative actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string", "enum": ["create", "update", "delete"] },
+        "entityType": { "type": "string", "enum": ["menu", "category", "users"] },
+        "entityId": { "type": "string" },
+        "entityName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["action", "entityType", "entityId", "entityName", "userEmail", "userId", "timestamp"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Represents a loyalty or promotional coupon code.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "description": { "type": "string" },
+        "discountType": { "type": "string", "enum": ["percentage", "fixed"] },
+        "discountValue": { "type": "number" },
+        "minPurchase": { "type": "number" },
+        "usageLimit": { "type": "number" },
+        "usedCount": { "type": "number" },
+        "active": { "type": "boolean" },
+        "expiryDate": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "discountType", "discountValue", "active", "createdAt"]
+    },
+    "Promotion": {
+      "title": "Promotion",
+      "description": "Represents a marketing promotion with discounts.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "discountType": { "type": "string", "enum": ["percentage", "fixed"] },
+        "discountValue": { "type": "number" },
+        "targetType": { "type": "string", "enum": ["item", "category", "all"] },
+        "targetId": { "type": "string" },
+        "active": { "type": "boolean" },
+        "startDate": { "type": "string", "format": "date-time" },
+        "endDate": { "type": "string", "format": "date-time" },
+        "imageUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "discountType", "discountValue", "targetType", "active", "createdAt"]
+    },
+    "BusinessRule": {
+      "title": "BusinessRule",
+      "description": "A business rule or test scenario",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+        "status": { "type": "string", "enum": ["draft", "implemented", "deprecated"] },
+        "testScenario": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "category", "priority", "status", "testScenario"]
+    },
+    "WaiterCall": {
+      "title": "WaiterCall",
+      "description": "A request for a waiter or the bill from a table",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tableId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "type": { "type": "string", "enum": ["waiter", "bill"] },
+        "status": { "type": "string", "enum": ["pending", "resolved"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tableId", "userId", "userName", "type", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "menu": { "schema": "MenuItem", "description": "Menu items collection" },
+    "categories": { "schema": "Category", "description": "Menu categories collection" },
+    "audit_logs": { "schema": "AuditLog", "description": "Audit logs collection" },
+    "orders": { "schema": "Order", "description": "Orders collection" },
+    "tables": { "schema": "Table", "description": "Tables collection" },
+    "users": { "schema": "User", "description": "Admin users collection" },
+    "metadata": { "schema": "object", "description": "System metadata and counters" },
+    "promotions": { "schema": "Promotion", "description": "Marketing promotions collection" },
+    "coupons": { "schema": "Coupon", "description": "Discount coupons collection" },
+    "waiter_calls": { "schema": "WaiterCall", "description": "Waiter and bill requests collection" },
+    "business_rules": { "schema": "BusinessRule", "description": "Business rules and test scenarios collection" }
+  }
+}

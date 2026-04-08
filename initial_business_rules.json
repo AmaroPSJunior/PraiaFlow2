@@ -1,0 +1,18 @@
+[
+  {
+    "title": "Validação de Pagamento PIX",
+    "description": "O sistema deve validar o status do pagamento via webhook ou polling antes de liberar o pedido para a cozinha.",
+    "status": "implemented",
+    "priority": "high",
+    "category": "payment",
+    "testScenario": "describe('PIX Payment', () => {\n  it('should transition to PAID after valid hash', async () => {\n    const order = await createOrder();\n    await simulatePixCallback(order.id, 'VALID_HASH');\n    expect(order.status).toBe('paid');\n  });\n});"
+  },
+  {
+    "title": "Limite de Itens no Carrinho",
+    "description": "Impedir que o cliente adicione mais de 50 itens em um único pedido para evitar erros de processamento.",
+    "status": "pending",
+    "priority": "medium",
+    "category": "order",
+    "testScenario": "it('should block adding 51st item', () => {\n  const cart = fillCart(50);\n  expect(() => cart.add(item)).toThrow('Limit exceeded');\n});"
+  }
+]

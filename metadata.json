@@ -1,0 +1,5 @@
+{
+  "name": "PraiaFlow - Kiosk Beach Orders",
+  "description": "A complete beach kiosk ordering system with QR code identification, real-time status tracking, and PIX payment simulation.",
+  "requestFramePermissions": ["camera"]
+}
