@@ -352,6 +352,11 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
       showFeedback('error', "Email e senha são obrigatórios.");
       return;
     }
+
+    if (newUser.password.length < 6) {
+      showFeedback('error', "A senha deve ter pelo menos 6 caracteres.");
+      return;
+    }
     
     setIsCreatingUser(true);
     try {
@@ -363,10 +368,17 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
         body: JSON.stringify(newUser),
       });
 
-      const data = await response.json();
+      let data;
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        throw new Error(text || `Erro do servidor: ${response.status}`);
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || 'Erro ao criar usuário');
+        throw new Error(data?.error || data?.message || 'Erro ao criar usuário');
       }
 
       await createAuditLog('create', 'users', data.uid, newUser.displayName || newUser.email, `Novo usuário criado via API com papel ${newUser.role}`);

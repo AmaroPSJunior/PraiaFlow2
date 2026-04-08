@@ -39,11 +39,17 @@ if (!admin.apps.length) {
     projectId: firebaseConfig.projectId,
   });
 }
-const adminDb = admin.firestore();
-if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)') {
-  // Note: In some versions of firebase-admin, you might need to specify the databaseId differently
-  // but for now we'll assume the default or that projectId is enough for the admin SDK to find it.
-}
+
+// Helper to get the correct Firestore instance
+const getAdminDb = () => {
+  const dbId = firebaseConfig.firestoreDatabaseId;
+  if (dbId && dbId !== '(default)') {
+    return admin.firestore(dbId);
+  }
+  return admin.firestore();
+};
+
+const adminDb = getAdminDb();
 
 // Initialize Mercado Pago
 console.log("Mercado Pago Access Token present:", !!process.env.MERCADO_PAGO_ACCESS_TOKEN);
@@ -173,7 +179,7 @@ async function startServer() {
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
-      await admin.firestore()
+      await adminDb
         .collection('users')
         .doc(profileId)
         .set(userProfile);
