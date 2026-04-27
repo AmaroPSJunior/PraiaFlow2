@@ -52,6 +52,40 @@ const getAdminDb = () => {
 
 const adminDb = getAdminDb();
 
+// Helper to log backend errors to Firestore
+const logBackendError = async (error: any, context: string, metadata?: any) => {
+  const message = error instanceof Error ? error.message : String(error);
+  
+  // Filter out common user/config errors from backend logs to avoid noise and permission issues
+  if (message.includes('identitytoolkit.googleapis.com')) {
+    console.warn(`[BackendConfigError] ${context}: Identity Toolkit API is disabled. Instruction sent to client.`);
+    return;
+  }
+
+  try {
+    const errorData = {
+      message,
+      stack: error instanceof Error ? error.stack : undefined,
+      context,
+      path: 'backend',
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      userAgent: 'Node.js Server',
+      metadata: {
+        ...metadata,
+        url: 'server-side',
+      }
+    };
+    console.error(`[BackendError] ${context}:`, error);
+    
+    // Only attempt to write to Firestore if it's not a permission error itself
+    if (!message.includes('PERMISSION_DENIED')) {
+      await adminDb.collection('system_errors').add(errorData);
+    }
+  } catch (err) {
+    console.error('Failed to log backend error to Firestore:', err);
+  }
+};
+
 // Initialize Mercado Pago
 console.log("Mercado Pago Access Token present:", !!process.env.MERCADO_PAGO_ACCESS_TOKEN);
 const mpClient = new MercadoPagoConfig({ 
@@ -163,19 +197,39 @@ async function startServer() {
         return res.status(400).json({ error: "Email, senha e papel são obrigatórios." });
       }
 
-      // 1. Create user in Firebase Auth
-      const userRecord = await admin.auth().createUser({
-        email,
-        password,
-        displayName,
-      });
+      // 1. Check if user exists in Firebase Auth
+      let userRecord;
+      let isExistingUser = false;
+      try {
+        userRecord = await admin.auth().getUserByEmail(email);
+        isExistingUser = true;
+        console.log("User already exists in Auth, adding new role profile.");
+      } catch (e: any) {
+        if (e.code === 'auth/user-not-found') {
+          // 2. Create user if not exists
+          userRecord = await admin.auth().createUser({
+            email,
+            password,
+            displayName,
+          });
+        } else {
+          throw e;
+        }
+      }
 
-      // 2. Create profile in Firestore
+      // 3. Create profile in Firestore
       const profileId = `${userRecord.uid}_${role}`;
+      
+      // Check if this specific role profile already exists
+      const profileSnap = await adminDb.collection('users').doc(profileId).get();
+      if (profileSnap.exists) {
+        return res.status(400).json({ error: `Este usuário já possui o perfil de ${role}.` });
+      }
+
       const userProfile = {
         uid: userRecord.uid,
         email,
-        displayName: displayName || email.split('@')[0],
+        displayName: displayName || userRecord.displayName || email.split('@')[0],
         role,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       };
@@ -188,11 +242,29 @@ async function startServer() {
       res.json({ 
         status: 'success', 
         uid: userRecord.uid,
-        message: `Usuário ${displayName || email} criado com sucesso.` 
+        message: isExistingUser 
+          ? `Perfil de ${role} adicionado com sucesso à conta existente de ${email}.`
+          : `Usuário ${displayName || email} criado com sucesso.` 
       });
     } catch (error: any) {
       console.error("Error creating user via Admin SDK:", error);
-      res.status(500).json({ error: error.message });
+      
+      let errorMessage = error.message;
+      
+      // Handle the Identity Toolkit API disabled error specifically
+      if (errorMessage.includes('identitytoolkit.googleapis.com')) {
+        errorMessage = 'O serviço de Autenticação do Firebase (Identity Toolkit API) não está ativado para este projeto. Por favor, ative-o no Console do Google Cloud (https://console.developers.google.com/apis/api/identitytoolkit.googleapis.com/overview?project=' + firebaseConfig.projectId + ') ou re-execute a configuração do Firebase no AI Studio.';
+        console.warn("[ConfigError] Identity Toolkit API is disabled. User needs to enable it.");
+      } else {
+        logBackendError(error, 'Create User API', { body: req.body });
+      }
+      
+      if (error.code === 'auth/email-already-exists') {
+        errorMessage = 'Este e-mail já está em uso por outro usuário.';
+      } else if (error.code === 'auth/invalid-password') {
+        errorMessage = 'A senha deve ter pelo menos 6 caracteres.';
+      }
+      res.status(500).json({ error: errorMessage });
     }
   });
 
@@ -288,6 +360,7 @@ ${dbRule.testScenario}
       res.json({ status: 'success', syncedCount: dbRules.length + fileTests.length });
     } catch (error: any) {
       console.error("Sync error:", error);
+      logBackendError(error, 'Sync Tests API');
       res.status(500).json({ error: error.message });
     }
   });
@@ -386,6 +459,7 @@ ${dbRule.testScenario}
       });
     } catch (error: any) {
       console.error("Error creating Mercado Pago payment:", error);
+      logBackendError(error, 'Create Payment API', { body: req.body });
       
       // Handle SDK specific error structure
       const status = error.status || 500;
@@ -432,6 +506,7 @@ ${dbRule.testScenario}
       res.status(200).send('OK');
     } catch (error: any) {
       console.error("Error processing Mercado Pago webhook:", error);
+      logBackendError(error, 'Mercado Pago Webhook', { body: req.body });
       res.status(500).json({ error: error.message });
     }
   });
@@ -493,6 +568,7 @@ ${dbRule.testScenario}
       `);
     } catch (error: any) {
       console.error("Error in Google callback:", error);
+      logBackendError(error, 'Google OAuth Callback');
       res.status(500).send("Erro na autenticação com o Google.");
     }
   });
@@ -543,6 +619,7 @@ ${dbRule.testScenario}
         });
       } catch (error) {
         console.error("Error fetching real usage:", error);
+        logBackendError(error, 'Billing Usage API');
       }
     }
 
@@ -614,6 +691,7 @@ ${dbRule.testScenario}
       });
     } catch (error: any) {
       console.error("Error fetching billing costs:", error);
+      logBackendError(error, 'Billing Costs API');
       res.status(500).json({ error: error.message });
     }
   });

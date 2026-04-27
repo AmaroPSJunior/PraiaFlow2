@@ -3,7 +3,7 @@ import { db, auth } from '../lib/firebase';
 import { collection, query, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, orderBy, where, getDocs, setDoc } from 'firebase/firestore';
 import { BusinessRule, UserFlow, UserProfile, AuditLog, SystemAccess, SystemError } from '../types';
 import { globalSignOut } from '../lib/authUtils';
-import { logSystemError } from '../lib/errorUtils';
+import { logSystemError, handleFirestoreError, OperationType } from '../lib/errorUtils';
 import { 
   Code, 
   Database, 
@@ -43,6 +43,10 @@ import {
   ChefHat,
   Bug,
   Monitor,
+  Archive,
+  CheckCircle,
+  XCircle,
+  Eye,
   Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -693,6 +697,8 @@ export default function RootView() {
   const [flows, setFlows] = useState<UserFlow[]>([]);
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [systemErrors, setSystemErrors] = useState<SystemError[]>([]);
+  const [errorFilter, setErrorFilter] = useState<'all' | 'active' | 'resolved'>('active');
+  const [selectedError, setSelectedError] = useState<SystemError | null>(null);
   const [systemAccess, setSystemAccess] = useState<SystemAccess>({ 
     client: true, waiter: true, staff: true, admin: true, root: true,
     devLogin: { admin: true, waiter: true, staff: true, root: true }
@@ -708,6 +714,9 @@ export default function RootView() {
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [ruleToDelete, setRuleToDelete] = useState<string | null>(null);
+  const [isAccessConfirmOpen, setIsAccessConfirmOpen] = useState(false);
+  const [isClearErrorsConfirmOpen, setIsClearErrorsConfirmOpen] = useState(false);
+  const [pendingAccessToggle, setPendingAccessToggle] = useState<{ type: 'system' | 'dev', role: string, value: boolean } | null>(null);
   const { t } = useLanguage();
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -1065,6 +1074,8 @@ export default function RootView() {
     const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'));
     return onSnapshot(q, (snapshot) => {
       setLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AuditLog)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'audit_logs');
     });
   }, []);
 
@@ -1072,43 +1083,103 @@ export default function RootView() {
     const q = query(collection(db, 'system_errors'), orderBy('timestamp', 'desc'));
     return onSnapshot(q, (snapshot) => {
       setSystemErrors(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SystemError)));
+    }, (error) => {
+      // Don't use handleFirestoreError here to avoid infinite loops if system_errors itself fails
+      console.error("Error listening to system errors:", error);
     });
   }, []);
 
   useEffect(() => {
     return onSnapshot(doc(db, 'settings', 'system_access'), (snapshot) => {
       if (snapshot.exists()) {
-        setSystemAccess(snapshot.data() as SystemAccess);
+        const data = snapshot.data() as SystemAccess;
+        setSystemAccess({
+          client: data.client ?? true,
+          waiter: data.waiter ?? true,
+          staff: data.staff ?? true,
+          admin: data.admin ?? true,
+          root: data.root ?? true,
+          devLogin: {
+            admin: data.devLogin?.admin ?? true,
+            waiter: data.devLogin?.waiter ?? true,
+            staff: data.devLogin?.staff ?? true,
+            root: data.devLogin?.root ?? true,
+          }
+        });
       }
     });
   }, []);
 
   const handleToggleSystemAccess = async (role: keyof SystemAccess, value: boolean) => {
-    try {
-      const newAccess = { ...systemAccess, [role]: value };
-      await setDoc(doc(db, 'settings', 'system_access'), newAccess);
-    } catch (error) {
-      console.error("Error updating system access:", error);
-      logSystemError(error, 'Toggle System Access', { role, value });
-    }
+    setPendingAccessToggle({ type: 'system', role: role as string, value });
+    setIsAccessConfirmOpen(true);
   };
 
   const handleToggleDevLogin = async (role: 'admin' | 'waiter' | 'staff' | 'root', value: boolean) => {
+    setPendingAccessToggle({ type: 'dev', role, value });
+    setIsAccessConfirmOpen(true);
+  };
+
+  const confirmAccessToggle = async () => {
+    if (!pendingAccessToggle) return;
+
     try {
-      const currentDevLogin = systemAccess.devLogin || { admin: true, waiter: true, staff: true, root: true };
-      const newAccess = { 
-        ...systemAccess, 
-        devLogin: { ...currentDevLogin, [role]: value } 
-      };
-      await setDoc(doc(db, 'settings', 'system_access'), newAccess);
+      if (pendingAccessToggle.type === 'system') {
+        await updateDoc(doc(db, 'settings', 'system_access'), {
+          [pendingAccessToggle.role]: pendingAccessToggle.value
+        });
+      } else {
+        await updateDoc(doc(db, 'settings', 'system_access'), {
+          [`devLogin.${pendingAccessToggle.role}`]: pendingAccessToggle.value
+        });
+      }
+      setIsAccessConfirmOpen(false);
+      setPendingAccessToggle(null);
     } catch (error) {
-      console.error("Error updating dev login access:", error);
-      logSystemError(error, 'Toggle Dev Login', { role, value });
+      console.error("Error updating access:", error);
+      logSystemError(error, 'Toggle Access Confirm', pendingAccessToggle);
     }
   };
 
   const handleLogout = async () => {
     await globalSignOut();
+  };
+
+  const handleClearErrors = async () => {
+    try {
+      const q = query(collection(db, 'system_errors'));
+      const snapshot = await getDocs(q);
+      const deletePromises = snapshot.docs.map(docSnap => deleteDoc(doc(db, 'system_errors', docSnap.id)));
+      await Promise.all(deletePromises);
+      setIsClearErrorsConfirmOpen(false);
+    } catch (error) {
+      console.error("Error clearing errors:", error);
+      logSystemError(error, 'Clear All Errors');
+    }
+  };
+
+  const handleResolveError = async (errorId: string, status: 'active' | 'resolved') => {
+    try {
+      await updateDoc(doc(db, 'system_errors', errorId), {
+        status,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error updating error status:", error);
+      logSystemError(error, 'Resolve Error');
+    }
+  };
+
+  const handleArchiveResolved = async () => {
+    try {
+      const q = query(collection(db, 'system_errors'), where('status', '==', 'resolved'));
+      const snapshot = await getDocs(q);
+      const deletePromises = snapshot.docs.map(docSnap => deleteDoc(doc(db, 'system_errors', docSnap.id)));
+      await Promise.all(deletePromises);
+    } catch (error) {
+      console.error("Error archiving resolved errors:", error);
+      logSystemError(error, 'Archive Resolved Errors');
+    }
   };
 
   const saveRule = async (e: React.FormEvent) => {
@@ -2142,25 +2213,78 @@ export default function RootView() {
                 exit={{ opacity: 0, y: -20 }}
                 className="space-y-6 flex-1 flex flex-col overflow-hidden"
               >
-                <div className="flex justify-between items-center">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div>
                     <h2 className="text-3xl font-black text-slate-900 dark:text-white uppercase tracking-tight">Logs de Erros</h2>
-                    <p className="text-slate-500 dark:text-slate-400 font-medium">Rastreamento de falhas em tempo real.</p>
+                    <p className="text-slate-500 dark:text-slate-400 font-medium">Rastreamento de falhas e persistência para análise.</p>
                   </div>
-                  <div className="flex items-center gap-2 bg-red-100 text-red-600 px-4 py-2 rounded-full text-xs font-black">
-                    <Bug size={14} /> SYSTEM MONITOR
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+                      {(['active', 'resolved', 'all'] as const).map((filter) => (
+                        <button
+                          key={filter}
+                          onClick={() => setErrorFilter(filter)}
+                          className={cn(
+                            "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                            errorFilter === filter 
+                              ? "bg-white dark:bg-slate-700 text-red-600 dark:text-red-400 shadow-sm" 
+                              : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                          )}
+                        >
+                          {filter === 'active' ? 'Ativos' : filter === 'resolved' ? 'Resolvidos' : 'Todos'}
+                        </button>
+                      ))}
+                    </div>
+                    
+                    {systemErrors.some(e => e.status === 'resolved') && (
+                      <button 
+                        onClick={handleArchiveResolved}
+                        className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl text-xs font-black transition-all border border-slate-200 dark:border-slate-700"
+                        title="Arquivar erros resolvidos"
+                      >
+                        <Archive size={14} /> ARQUIVAR
+                      </button>
+                    )}
+
+                    <button 
+                      onClick={() => setIsClearErrorsConfirmOpen(true)}
+                      className="flex items-center gap-2 px-4 py-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-xl text-xs font-black transition-all border border-red-500/20"
+                    >
+                      <Trash2 size={14} /> LIMPAR TUDO
+                    </button>
                   </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-                  {systemErrors.map(error => (
+                  {systemErrors
+                    .filter(error => {
+                      if (errorFilter === 'all') return true;
+                      return error.status === errorFilter || (!error.status && errorFilter === 'active');
+                    })
+                    .map(error => (
                     <div 
                       key={error.id}
-                      className="bg-white dark:bg-slate-800 rounded-3xl border border-red-100 dark:border-red-900/20 p-6 shadow-sm hover:shadow-md transition-all group"
+                      className={cn(
+                        "bg-white dark:bg-slate-800 rounded-3xl border p-6 shadow-sm hover:shadow-md transition-all group relative overflow-hidden",
+                        error.status === 'resolved' 
+                          ? "border-slate-100 dark:border-slate-800 opacity-60" 
+                          : "border-red-100 dark:border-red-900/20"
+                      )}
                     >
+                      {/* Status Strip */}
+                      <div className={cn(
+                        "absolute left-0 top-0 bottom-0 w-1.5",
+                        error.status === 'resolved' ? "bg-slate-300 dark:bg-slate-700" : "bg-red-500"
+                      )} />
+
                       <div className="flex flex-col sm:flex-row gap-4">
-                        <div className="w-12 h-12 bg-red-50 dark:bg-red-900/20 rounded-2xl flex items-center justify-center text-red-500 shrink-0">
-                          <AlertTriangle size={24} />
+                        <div className={cn(
+                          "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0",
+                          error.status === 'resolved' 
+                            ? "bg-slate-50 dark:bg-slate-900/40 text-slate-400" 
+                            : "bg-red-50 dark:bg-red-900/20 text-red-500"
+                        )}>
+                          {error.status === 'resolved' ? <CheckCircle size={24} /> : <AlertTriangle size={24} />}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-3 mb-2">
@@ -2170,11 +2294,19 @@ export default function RootView() {
                             <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-mono text-slate-600 dark:text-slate-400">
                               {error.path}
                             </span>
-                            <span className="px-2 py-0.5 bg-red-100 text-red-600 rounded text-[10px] font-black uppercase tracking-widest">
+                            <span className={cn(
+                              "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest",
+                              error.status === 'resolved' 
+                                ? "bg-slate-100 dark:bg-slate-700 text-slate-500" 
+                                : "bg-red-100 text-red-600"
+                            )}>
                               {error.role || 'ANONYMOUS'}
                             </span>
                           </div>
-                          <h3 className="text-lg font-bold text-red-600 dark:text-red-400 mb-2 break-words">
+                          <h3 className={cn(
+                            "text-lg font-bold mb-2 break-words",
+                            error.status === 'resolved' ? "text-slate-500" : "text-red-600 dark:text-red-400"
+                          )}>
                             {error.message}
                           </h3>
                           <div className="flex flex-wrap gap-4 text-[10px] text-slate-500 dark:text-slate-400 font-medium">
@@ -2187,30 +2319,39 @@ export default function RootView() {
                           </div>
                         </div>
                         <div className="flex sm:flex-col gap-2">
-                          {error.stack && (
+                          <button 
+                            onClick={() => setSelectedError(error)}
+                            className="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all flex items-center gap-2"
+                          >
+                            <Eye size={12} /> Detalhes
+                          </button>
+                          
+                          {error.status !== 'resolved' ? (
                             <button 
-                              onClick={() => alert(error.stack)}
-                              className="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-600 hover:text-white transition-all"
+                              onClick={() => handleResolveError(error.id, 'resolved')}
+                              className="px-3 py-1.5 bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-green-600 hover:text-white transition-all flex items-center gap-2"
                             >
-                              Stack
+                              <CheckCircle size={12} /> Resolver
                             </button>
-                          )}
-                          {error.metadata && (
+                          ) : (
                             <button 
-                              onClick={() => alert(JSON.stringify(error.metadata, null, 2))}
-                              className="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-sky-600 hover:text-white transition-all"
+                              onClick={() => handleResolveError(error.id, 'active')}
+                              className="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-amber-600 hover:text-white transition-all flex items-center gap-2"
                             >
-                              Meta
+                              <RotateCcw size={12} /> Reabrir
                             </button>
                           )}
                         </div>
                       </div>
                     </div>
                   ))}
-                  {systemErrors.length === 0 && (
+                  {systemErrors.filter(error => {
+                    if (errorFilter === 'all') return true;
+                    return error.status === errorFilter || (!error.status && errorFilter === 'active');
+                  }).length === 0 && (
                     <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-4">
                       <CheckCircle2 size={64} className="opacity-20 text-green-500" />
-                      <p className="font-bold">Nenhum erro registrado no sistema.</p>
+                      <p className="font-bold">Nenhum erro {errorFilter === 'active' ? 'ativo' : errorFilter === 'resolved' ? 'resolvido' : ''} registrado.</p>
                     </div>
                   )}
                 </div>
@@ -2303,6 +2444,242 @@ export default function RootView() {
                       Excluir
                     </button>
                   </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Access Confirmation Modal */}
+        <AnimatePresence>
+          {isAccessConfirmOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="bg-white dark:bg-slate-800 rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl border border-slate-200 dark:border-slate-700"
+              >
+                <div className="flex flex-col items-center text-center gap-6">
+                  <div className="w-20 h-20 bg-purple-100 dark:bg-purple-900/30 rounded-full flex items-center justify-center text-purple-600">
+                    <ShieldCheck size={40} />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-tight">Alterar Configuração?</h3>
+                    <p className="text-slate-500 dark:text-slate-400 mt-2 font-medium">
+                      Você está prestes a {pendingAccessToggle?.value ? 'ativar' : 'desativar'} o acesso para 
+                      <span className="text-purple-600 dark:text-purple-400 font-bold mx-1">
+                        {pendingAccessToggle?.role.toUpperCase()}
+                      </span> 
+                      no {pendingAccessToggle?.type === 'system' ? 'sistema' : 'login de desenvolvimento'}.
+                    </p>
+                  </div>
+                  <div className="flex gap-3 w-full">
+                    <button 
+                      onClick={() => {
+                        setIsAccessConfirmOpen(false);
+                        setPendingAccessToggle(null);
+                      }}
+                      className="flex-1 px-6 py-4 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-2xl font-black uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-600 transition-all"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      onClick={confirmAccessToggle}
+                      className="flex-1 px-6 py-4 bg-purple-600 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-purple-700 transition-all shadow-lg shadow-purple-600/20"
+                    >
+                      Confirmar
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Clear Errors Confirmation Modal */}
+        <AnimatePresence>
+          {isClearErrorsConfirmOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="bg-white dark:bg-slate-800 rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl border border-slate-200 dark:border-slate-700"
+              >
+                <div className="flex flex-col items-center text-center gap-6">
+                  <div className="w-20 h-20 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center text-red-600">
+                    <Trash2 size={40} />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-tight">Limpar Todos os Erros?</h3>
+                    <p className="text-slate-500 dark:text-slate-400 mt-2 font-medium">
+                      Esta ação irá excluir permanentemente todos os registros de erros do sistema. Esta operação não pode ser desfeita.
+                    </p>
+                  </div>
+                  <div className="flex gap-3 w-full">
+                    <button 
+                      onClick={() => setIsClearErrorsConfirmOpen(false)}
+                      className="flex-1 px-6 py-4 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-2xl font-black uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-600 transition-all"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      onClick={handleClearErrors}
+                      className="flex-1 px-6 py-4 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg shadow-red-600/20"
+                    >
+                      Limpar Tudo
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Error Details Modal */}
+        <AnimatePresence>
+          {selectedError && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                className="bg-white dark:bg-slate-900 rounded-[2.5rem] w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col"
+              >
+                <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-2xl flex items-center justify-center text-red-600">
+                      <Bug size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-tight">Detalhes do Erro</h3>
+                      <p className="text-slate-500 dark:text-slate-400 text-xs font-mono uppercase tracking-widest">{selectedError.id}</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setSelectedError(null)}
+                    className="p-3 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-2xl transition-all text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                  {/* Summary Section */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Mensagem</span>
+                        <p className="text-red-600 dark:text-red-400 font-bold leading-relaxed">{selectedError.message}</p>
+                      </div>
+                      <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Caminho / URL</span>
+                        <p className="text-slate-700 dark:text-slate-200 font-mono text-xs break-all">{selectedError.path}</p>
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Data/Hora</span>
+                          <p className="text-slate-700 dark:text-slate-200 font-bold text-sm">
+                            {selectedError.timestamp?.toDate ? selectedError.timestamp.toDate().toLocaleString() : 'N/A'}
+                          </p>
+                        </div>
+                        <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Status</span>
+                          <span className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest",
+                            selectedError.status === 'resolved' ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
+                          )}>
+                            {selectedError.status || 'active'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Usuário</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center text-indigo-600">
+                            <User size={12} />
+                          </div>
+                          <p className="text-slate-700 dark:text-slate-200 font-bold text-xs">{selectedError.userEmail || 'Anônimo'}</p>
+                          <span className="text-[10px] text-slate-400 font-mono">({selectedError.role || 'guest'})</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Stack Trace */}
+                  {selectedError.stack && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                          <Terminal size={14} /> Stack Trace
+                        </label>
+                        <button 
+                          onClick={() => navigator.clipboard.writeText(selectedError.stack || '')}
+                          className="text-[10px] font-black text-indigo-500 hover:text-indigo-600 uppercase tracking-widest"
+                        >
+                          Copiar Stack
+                        </button>
+                      </div>
+                      <div className="bg-slate-900 rounded-3xl p-6 font-mono text-[10px] text-slate-300 overflow-x-auto whitespace-pre leading-relaxed border border-slate-800 shadow-inner">
+                        {selectedError.stack}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Metadata */}
+                  {selectedError.metadata && (
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <FileJson size={14} /> Metadata / Context
+                      </label>
+                      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-3xl p-6 font-mono text-[10px] text-slate-600 dark:text-slate-400 overflow-x-auto border border-slate-100 dark:border-slate-700">
+                        <pre>{JSON.stringify(selectedError.metadata, null, 2)}</pre>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Device Info */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                      <Monitor size={14} /> Device / User Agent
+                    </label>
+                    <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-700 font-mono text-[10px] text-slate-500 break-all">
+                      {selectedError.userAgent}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-8 bg-slate-50/50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-800 flex gap-3">
+                  <button 
+                    onClick={() => setSelectedError(null)}
+                    className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-black uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                  >
+                    Fechar
+                  </button>
+                  {selectedError.status !== 'resolved' ? (
+                    <button 
+                      onClick={() => {
+                        handleResolveError(selectedError.id, 'resolved');
+                        setSelectedError(null);
+                      }}
+                      className="flex-1 py-4 bg-green-600 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20"
+                    >
+                      Marcar como Resolvido
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={() => {
+                        handleResolveError(selectedError.id, 'active');
+                        setSelectedError(null);
+                      }}
+                      className="flex-1 py-4 bg-amber-500 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg shadow-amber-500/20"
+                    >
+                      Reabrir Erro
+                    </button>
+                  )}
                 </div>
               </motion.div>
             </div>

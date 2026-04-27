@@ -188,6 +188,24 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["tableId", "userId", "userName", "type", "status", "createdAt"]
+    },
+    "SystemError": {
+      "title": "SystemError",
+      "description": "A log of system errors and exceptions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "message": { "type": "string" },
+        "stack": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "role": { "type": "string" },
+        "path": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "userAgent": { "type": "string" },
+        "metadata": { "type": "object" }
+      },
+      "required": ["message", "path", "timestamp", "userAgent"]
     }
   },
   "firestore": {
@@ -201,6 +219,7 @@
     "promotions": { "schema": "Promotion", "description": "Marketing promotions collection" },
     "coupons": { "schema": "Coupon", "description": "Discount coupons collection" },
     "waiter_calls": { "schema": "WaiterCall", "description": "Waiter and bill requests collection" },
-    "business_rules": { "schema": "BusinessRule", "description": "Business rules and test scenarios collection" }
+    "business_rules": { "schema": "BusinessRule", "description": "Business rules and test scenarios collection" },
+    "system_errors": { "schema": "SystemError", "description": "System errors and exceptions collection" }
   }
 }

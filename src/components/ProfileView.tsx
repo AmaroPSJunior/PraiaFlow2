@@ -3,8 +3,10 @@ import { db, auth } from '../lib/firebase';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile } from '../types';
 import { motion } from 'framer-motion';
-import { User, Phone, CreditCard, MapPin, Save, Loader2, ArrowLeft, Mail } from 'lucide-react';
+import { User, Phone, CreditCard, MapPin, Save, Loader2, ArrowLeft, Mail, Lock, Shield, Eye, EyeOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { logSystemError } from '../lib/errorUtils';
 
 interface ProfileViewProps {
   profile: UserProfile;
@@ -22,6 +24,14 @@ export default function ProfileView({ profile, onUpdate }: ProfileViewProps) {
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  // Password Change States
+  const [showSecurity, setShowSecurity] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showPasswords, setShowPasswords] = useState(false);
+  const [passwordLoading, setPasswordLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,9 +52,53 @@ export default function ProfileView({ profile, onUpdate }: ProfileViewProps) {
       setSuccess('Perfil atualizado com sucesso!');
     } catch (err: any) {
       console.error('Error updating profile:', err);
+      logSystemError(err, 'Profile Update');
       setError('Erro ao atualizar perfil: ' + err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!auth.currentUser || !auth.currentUser.email) return;
+    
+    if (newPassword !== confirmNewPassword) {
+      setError('As novas senhas não coincidem.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setError('A nova senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    setPasswordLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      // Reauthenticate first
+      const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      
+      // Update password
+      await updatePassword(auth.currentUser, newPassword);
+      
+      setSuccess('Senha alterada com sucesso!');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setShowSecurity(false);
+    } catch (err: any) {
+      console.error('Error changing password:', err);
+      logSystemError(err, 'Password Change');
+      if (err.code === 'auth/wrong-password') {
+        setError('Senha atual incorreta.');
+      } else {
+        setError('Erro ao alterar senha: ' + err.message);
+      }
+    } finally {
+      setPasswordLoading(false);
     }
   };
 
@@ -172,6 +226,84 @@ export default function ProfileView({ profile, onUpdate }: ProfileViewProps) {
               {loading ? 'Salvando...' : 'Salvar Alterações'}
             </button>
           </form>
+
+          {/* Security Section */}
+          <div className="pt-8 border-t border-slate-100 dark:border-slate-800 space-y-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3 text-slate-900 dark:text-white">
+                <Shield className="text-sky-600" size={24} />
+                <h3 className="text-lg font-black uppercase tracking-tight">Segurança</h3>
+              </div>
+              <button
+                onClick={() => setShowSecurity(!showSecurity)}
+                className="text-xs font-bold text-sky-600 hover:text-sky-700 uppercase tracking-widest"
+              >
+                {showSecurity ? 'Cancelar' : 'Alterar Senha'}
+              </button>
+            </div>
+
+            {showSecurity && (
+              <form onSubmit={handlePasswordChange} className="space-y-4 animate-in fade-in slide-in-from-top-4 duration-300">
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Senha Atual</label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                      <input
+                        type={showPasswords ? 'text' : 'password'}
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-950 border-2 border-transparent focus:border-sky-500 rounded-2xl outline-none transition-all dark:text-white text-sm"
+                        placeholder="••••••••"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Nova Senha</label>
+                      <input
+                        type={showPasswords ? 'text' : 'password'}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="w-full px-4 py-4 bg-slate-50 dark:bg-slate-950 border-2 border-transparent focus:border-sky-500 rounded-2xl outline-none transition-all dark:text-white text-sm"
+                        placeholder="••••••••"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Confirmar Nova Senha</label>
+                      <input
+                        type={showPasswords ? 'text' : 'password'}
+                        value={confirmNewPassword}
+                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                        className="w-full px-4 py-4 bg-slate-50 dark:bg-slate-950 border-2 border-transparent focus:border-sky-500 rounded-2xl outline-none transition-all dark:text-white text-sm"
+                        placeholder="••••••••"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswords(!showPasswords)}
+                    className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4 hover:text-sky-600 transition-colors"
+                  >
+                    {showPasswords ? <EyeOff size={14} /> : <Eye size={14} />}
+                    {showPasswords ? 'Ocultar senhas' : 'Mostrar senhas'}
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={passwordLoading}
+                  className="w-full bg-sky-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-sky-700 transition-all shadow-lg active:scale-95 disabled:opacity-50 flex items-center justify-center gap-3"
+                >
+                  {passwordLoading ? <Loader2 className="animate-spin" size={20} /> : <Lock size={20} />}
+                  {passwordLoading ? 'Alterando...' : 'Confirmar Nova Senha'}
+                </button>
+              </form>
+            )}
+          </div>
         </motion.div>
       </div>
     </div>

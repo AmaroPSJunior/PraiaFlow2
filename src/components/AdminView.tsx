@@ -5,6 +5,7 @@ import { collection, query, onSnapshot, updateDoc, doc, orderBy, limit, addDoc, 
 import { Order, MenuItem, Table, Category, AuditLog, Promotion, Coupon, ReservationSettings, UserProfile, SystemAccess } from '../types';
 import { globalSignOut } from '../lib/authUtils';
 import { logAction } from '../lib/firebase';
+import { logSystemError, handleFirestoreError, OperationType } from '../lib/errorUtils';
 import { LayoutDashboard, ShoppingBag, ShoppingCart, ChevronRight, UtensilsCrossed, Settings, LogOut, CheckCircle, Clock, XCircle, AlertCircle, Play, Check, Truck, Plus, Trash2, Edit2, List, Beer, Pizza, Coffee, IceCream, Grape, Apple, Fish, Beef, Utensils, Menu, History, Soup, Cake, Wine, GlassWater, Sandwich, Cookie, Tag, Ticket, Sparkles, Search, Map as MapIcon, Calendar, QrCode, TrendingUp, Package, Bell, Receipt, User, RotateCcw, ShieldCheck, ChefHat, Code, Save, UserPlus, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -109,62 +110,13 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
   const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0 });
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
-  enum OperationType {
-    CREATE = 'create',
-    UPDATE = 'update',
-    DELETE = 'delete',
-    LIST = 'list',
-    GET = 'get',
-    WRITE = 'write',
-  }
-
-  interface FirestoreErrorInfo {
-    error: string;
-    operationType: OperationType;
-    path: string | null;
-    authInfo: {
-      userId: string | undefined;
-      email: string | null | undefined;
-      emailVerified: boolean | undefined;
-      isAnonymous: boolean | undefined;
-      tenantId: string | null | undefined;
-      providerInfo: {
-        providerId: string;
-        displayName: string | null;
-        email: string | null;
-        photoUrl: string | null;
-      }[];
-    }
-  }
-
-  const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
-    const errInfo: FirestoreErrorInfo = {
-      error: error instanceof Error ? error.message : String(error),
-      authInfo: {
-        userId: user?.uid,
-        email: user?.email,
-        emailVerified: user?.emailVerified,
-        isAnonymous: user?.isAnonymous,
-        tenantId: user?.tenantId,
-        providerInfo: user?.providerData?.map((provider: any) => ({
-          providerId: provider.providerId,
-          displayName: provider.displayName,
-          email: provider.email,
-          photoUrl: provider.photoURL
-        })) || []
-      },
-      operationType,
-      path
-    }
-    console.error('Firestore Error: ', JSON.stringify(errInfo));
-    throw new Error(JSON.stringify(errInfo));
-  };
-  
   useEffect(() => {
     const unsubscribe = onSnapshot(doc(db, 'settings', 'reservation'), (snapshot) => {
       if (snapshot.exists()) {
         setReservationSettings(snapshot.data() as ReservationSettings);
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'settings/reservation');
     });
     return () => unsubscribe();
   }, []);
@@ -172,7 +124,20 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
   useEffect(() => {
     const unsubscribe = onSnapshot(doc(db, 'settings', 'system_access'), (snapshot) => {
       if (snapshot.exists()) {
-        setSystemAccess(snapshot.data() as SystemAccess);
+        const data = snapshot.data() as SystemAccess;
+        setSystemAccess({
+          client: data.client ?? true,
+          waiter: data.waiter ?? true,
+          staff: data.staff ?? true,
+          admin: data.admin ?? true,
+          root: data.root ?? true,
+          devLogin: {
+            admin: data.devLogin?.admin ?? true,
+            waiter: data.devLogin?.waiter ?? true,
+            staff: data.devLogin?.staff ?? true,
+            root: data.devLogin?.root ?? true,
+          }
+        });
       } else {
         // Initialize with defaults if not exists
         setDoc(doc(db, 'settings', 'system_access'), {
@@ -180,9 +145,12 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
           waiter: true,
           staff: true,
           admin: true,
-          root: true
+          root: true,
+          devLogin: { admin: true, waiter: true, staff: true, root: true }
         });
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'settings/system_access');
     });
     return () => unsubscribe();
   }, []);
@@ -233,6 +201,7 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
       setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
     }, (error) => {
       console.error("Error in categories snapshot:", error);
+      handleFirestoreError(error, OperationType.LIST, 'categories');
     });
     return () => unsubscribe();
   }, []);
@@ -243,6 +212,7 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
       setOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order)));
     }, (error) => {
       console.error("Error in orders snapshot:", error);
+      handleFirestoreError(error, OperationType.LIST, 'orders');
     });
     return () => unsubscribe();
   }, []);
@@ -252,6 +222,7 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
       setMenu(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MenuItem)));
     }, (error) => {
       console.error("Error in menu snapshot:", error);
+      handleFirestoreError(error, OperationType.LIST, 'menu');
     });
     return () => unsubscribe();
   }, []);
@@ -261,6 +232,7 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
       setPromotions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Promotion)));
     }, (error) => {
       console.error("Error in promotions snapshot:", error);
+      handleFirestoreError(error, OperationType.LIST, 'promotions');
     });
     return () => unsubscribe();
   }, []);
@@ -270,6 +242,7 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
       setCoupons(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Coupon)));
     }, (error) => {
       console.error("Error in coupons snapshot:", error);
+      handleFirestoreError(error, OperationType.LIST, 'coupons');
     });
     return () => unsubscribe();
   }, []);
@@ -336,7 +309,7 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
 
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
-      setUsers(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
+      setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
     }, (error) => {
       console.error("Error in users snapshot:", error);
     });
@@ -382,7 +355,7 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
       }
 
       await createAuditLog('create', 'users', data.uid, newUser.displayName || newUser.email, `Novo usuário criado via API com papel ${newUser.role}`);
-      showFeedback('success', `Usuário ${newUser.displayName || newUser.email} criado com sucesso!`);
+      showFeedback('success', data.message || `Usuário ${newUser.displayName || newUser.email} criado com sucesso!`);
       setNewUser({ email: '', displayName: '', password: '', role: 'client' });
     } catch (error: any) {
       console.error("Error creating user:", error);
@@ -2331,6 +2304,7 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
                     <option value="waiter">Atendente</option>
                     <option value="staff">Cozinha</option>
                     <option value="admin">Administrador</option>
+                    <option value="root">Root</option>
                   </select>
                 </div>
                 <button 
@@ -2356,8 +2330,8 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
-                    {users.map((user) => (
-                      <tr key={user.uid} className="hover:bg-gray-50 dark:hover:bg-slate-700/30 transition-colors">
+                    {users.map((user: any) => (
+                      <tr key={user.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/30 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-full bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center text-sky-600 dark:text-sky-400">
@@ -2365,7 +2339,7 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
                             </div>
                             <div>
                               <p className="text-sm font-bold text-gray-900 dark:text-white">{user.displayName || user.email.split('@')[0]}</p>
-                              <p className="text-[10px] text-gray-500 dark:text-slate-400 font-mono">{user.uid}</p>
+                              <p className="text-[10px] text-gray-500 dark:text-slate-400 font-mono">{user.uid || user.id}</p>
                             </div>
                           </div>
                         </td>
@@ -2375,12 +2349,14 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
                         <td className="px-6 py-4">
                           <span className={cn(
                             "px-3 py-1 rounded-full text-[10px] font-bold uppercase",
+                            user.role === 'root' && "bg-red-100 text-red-600",
                             user.role === 'admin' && "bg-purple-100 text-purple-600",
                             user.role === 'waiter' && "bg-amber-100 text-amber-600",
                             user.role === 'staff' && "bg-blue-100 text-blue-600",
                             user.role === 'client' && "bg-gray-100 text-gray-600"
                           )}>
-                            {user.role === 'admin' ? 'Administrador' : 
+                            {user.role === 'root' ? 'Root' :
+                             user.role === 'admin' ? 'Administrador' : 
                              user.role === 'waiter' ? 'Atendente' : 
                              user.role === 'staff' ? 'Staff' : 'Cliente'}
                           </span>
@@ -2396,6 +2372,7 @@ export default function AdminView({ user: propUser, profile: propProfile }: Admi
                               <option value="waiter">Atendente</option>
                               <option value="staff">Staff</option>
                               <option value="admin">Administrador</option>
+                              <option value="root">Root</option>
                             </select>
                           </div>
                         </td>

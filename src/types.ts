@@ -194,5 +194,7 @@ export interface SystemError {
   path: string;
   timestamp: any;
   userAgent: string;
+  status: 'active' | 'resolved';
+  severity: 'error' | 'warning' | 'info';
   metadata?: Record<string, any>;
 }

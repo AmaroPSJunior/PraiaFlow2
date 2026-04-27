@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { collection, onSnapshot, query, where, doc, getDoc, updateDoc, serverTimestamp, getDocs } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { globalSignOut } from '../lib/authUtils';
-import { logSystemError } from '../lib/errorUtils';
+import { logSystemError, handleFirestoreError, OperationType } from '../lib/errorUtils';
 import { Table, ReservationSettings, SystemAccess } from '../types';
 import { useLanguage } from '../lib/LanguageContext';
 import { QrCode, LayoutGrid, ShieldCheck, User, ArrowLeft, Camera, Waves, Sun, UtensilsCrossed, Calendar, XCircle, CheckCircle2, Clock, List, Check, AlertCircle, RefreshCw, Bell, ChefHat, LogOut, Code } from 'lucide-react';
@@ -238,6 +238,8 @@ export default function Home({ user, systemAccess: propSystemAccess }: HomeProps
           durationMinutes: data.durationMinutes !== undefined ? Number(data.durationMinutes) : prev.durationMinutes,
         }));
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'settings/reservation');
     });
     return () => unsubscribe();
   }, []);
@@ -247,6 +249,8 @@ export default function Home({ user, systemAccess: propSystemAccess }: HomeProps
       if (snapshot.exists()) {
         setSystemAccess(snapshot.data() as SystemAccess);
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'settings/system_access');
     });
     return () => unsubscribe();
   }, []);
@@ -284,7 +288,7 @@ export default function Home({ user, systemAccess: propSystemAccess }: HomeProps
       setLoading(false);
     }, (err) => {
       console.error("Home: Error fetching tables:", err);
-      logSystemError(err, 'Fetch Tables', { userId: user?.uid });
+      handleFirestoreError(err, OperationType.LIST, 'tables');
       setLoading(false);
     });
     return () => {
@@ -321,12 +325,14 @@ export default function Home({ user, systemAccess: propSystemAccess }: HomeProps
       console.log("Confirming reservation...", { user, selectedTable, reservationSettings });
       
       if (!user) {
+        logSystemError('User not logged in for reservation', 'Reservation - Auth Check');
         alert("Você precisa estar logado para reservar uma mesa. Por favor, faça login primeiro.");
         navigate('/login');
         return;
       }
       
       if (!selectedTable) {
+        logSystemError('No table selected for reservation', 'Reservation - Table Check');
         alert("Por favor, selecione uma mesa no mapa primeiro.");
         return;
       }
@@ -341,6 +347,7 @@ export default function Home({ user, systemAccess: propSystemAccess }: HomeProps
       });
     } catch (error) {
       console.error("Error in handleConfirmReservation:", error);
+      logSystemError(error, 'Reservation Confirmation');
       alert("Ocorreu um erro ao iniciar a reserva. Por favor, tente novamente.");
     }
   };
@@ -348,6 +355,7 @@ export default function Home({ user, systemAccess: propSystemAccess }: HomeProps
   const simulatePayment = async (success: boolean) => {
     if (!success) {
       setPaymentStep('none');
+      logSystemError('Payment refused by user/system', 'Simulated Payment');
       alert("Pagamento recusado.");
       return;
     }
@@ -375,6 +383,7 @@ export default function Home({ user, systemAccess: propSystemAccess }: HomeProps
       }
     } catch (error) {
       console.error("Error reserving table:", error);
+      logSystemError(error, 'Table Reservation Process');
       setPaymentStep('none');
       alert("Erro ao processar reserva.");
     }
@@ -397,7 +406,6 @@ export default function Home({ user, systemAccess: propSystemAccess }: HomeProps
     }
   }, [navigate]);
 
-  const freeTables = tables.filter(t => !t.currentUserId || t.currentUserId === user?.uid);
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -665,33 +673,42 @@ export default function Home({ user, systemAccess: propSystemAccess }: HomeProps
                   <div className="w-12 h-12 border-4 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
                   <p className="text-slate-400 font-bold text-xs uppercase tracking-widest animate-pulse">Carregando mesas...</p>
                   <button 
-                    onClick={() => {
-                      setLoading(true);
-                      window.location.reload();
-                    }}
+                    onClick={() => setLoading(true)}
                     className="mt-4 px-4 py-2 bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400 rounded-xl text-[10px] font-black uppercase tracking-widest"
                   >
                     Tentar Recarregar
                   </button>
                 </div>
-              ) : freeTables.length > 0 ? (
-                freeTables.sort((a, b) => a.number - b.number).map((table) => (
-                  <button
-                    key={table.id}
-                    onClick={() => navigate(`/mesa/${table.number}`)}
-                    className="aspect-square bg-white dark:bg-slate-900 rounded-3xl shadow-lg border-2 border-transparent hover:border-sky-500 hover:scale-105 transition-all active:scale-95 flex flex-col items-center justify-center group"
-                  >
-                    <span className="text-3xl font-black text-slate-900 dark:text-white group-hover:text-sky-600 transition-colors">{table.number}</span>
-                    <div className="w-2 h-2 bg-green-500 rounded-full mt-1 animate-pulse" />
-                  </button>
-                ))
+              ) : tables.length > 0 ? (
+                tables.sort((a, b) => a.number - b.number).map((table) => {
+                  const isOccupied = table.currentUserId && table.currentUserId !== user?.uid;
+                  return (
+                    <button
+                      key={table.id}
+                      onClick={() => navigate(`/mesa/${table.number}`)}
+                      className={`aspect-square rounded-3xl shadow-lg border-2 transition-all active:scale-95 flex flex-col items-center justify-center group ${
+                        isOccupied 
+                          ? 'bg-slate-100 dark:bg-slate-800 border-transparent opacity-60' 
+                          : 'bg-white dark:bg-slate-900 border-transparent hover:border-sky-500 hover:scale-105'
+                      }`}
+                    >
+                      <span className={`text-3xl font-black transition-colors ${
+                        isOccupied ? 'text-slate-400' : 'text-slate-900 dark:text-white group-hover:text-sky-600'
+                      }`}>
+                        {table.number}
+                      </span>
+                      <div className={`w-2 h-2 rounded-full mt-1 ${isOccupied ? 'bg-slate-300' : 'bg-green-500 animate-pulse'}`} />
+                      {isOccupied && <span className="text-[8px] font-bold text-slate-400 uppercase mt-1">Ocupada</span>}
+                    </button>
+                  );
+                })
               ) : (
                 <div className="col-span-full py-20 bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-inner border-2 border-dashed border-slate-200 dark:border-slate-800 flex flex-col items-center gap-4">
                   <p className="text-slate-400 dark:text-slate-600 font-bold uppercase tracking-widest italic">
-                    {t('noFreeTables')}
+                    Nenhuma mesa cadastrada no sistema
                   </p>
                   <button 
-                    onClick={() => window.location.reload()}
+                    onClick={() => setLoading(true)}
                     className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-gray-200 transition-colors"
                   >
                     <RefreshCw size={14} /> Atualizar

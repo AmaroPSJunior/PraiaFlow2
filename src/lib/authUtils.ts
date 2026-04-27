@@ -1,5 +1,6 @@
 import { auth, db } from './firebase';
 import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { logSystemError } from './errorUtils';
 
 export const globalSignOut = async () => {
   const mockUserStr = localStorage.getItem('mock_user');
@@ -23,6 +24,7 @@ export const globalSignOut = async () => {
       await Promise.all(updatePromises);
     } catch (err) {
       console.error("Error unlinking table on global logout:", err);
+      logSystemError(err, 'Sign Out - Table Unlink');
     }
   }
 
@@ -43,16 +45,15 @@ export const globalSignOut = async () => {
     
     sessionStorage.clear();
 
-    // Sign out and redirect
+    // Sign out
     // We don't await signOut indefinitely to prevent hanging the UI
     await Promise.race([
       auth.signOut(),
       new Promise(resolve => setTimeout(resolve, 2000)) // 2s timeout
     ]);
     
-    window.location.href = '/';
   } catch (err) {
     console.error("Error during global sign out:", err);
-    window.location.href = '/';
+    logSystemError(err, 'Sign Out - Final Process');
   }
 };

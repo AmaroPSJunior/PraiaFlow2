@@ -211,7 +211,7 @@ export default function ClientView({ user, profile }: ClientViewProps) {
       setIsReleased(true);
       showFeedback('error', "Sua sessão nesta mesa foi encerrada pelo administrador.");
       localStorage.removeItem(`cart_mesa_${tableId}`);
-      setTimeout(() => window.location.href = '/', 3000);
+      setTimeout(() => navigate('/'), 3000);
     }
     prevUserTableRef.current = userTable;
   }, [userTable, tableId, navigate, isReleased]);

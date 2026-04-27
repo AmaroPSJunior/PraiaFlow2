@@ -102,7 +102,7 @@ export default function WaiterView({ user, profile }: WaiterViewProps) {
       <header className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6 mb-12 z-10 relative">
         <div className="flex items-center gap-4">
           <button 
-            onClick={() => window.location.href = '/'}
+            onClick={() => navigate('/')}
             className="p-3 bg-white dark:bg-slate-900 rounded-2xl shadow-lg text-slate-400 hover:text-sky-600 transition-colors"
           >
             <ArrowLeft size={20} />
